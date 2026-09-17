@@ -316,3 +316,6 @@ mod extended_timers_utf8;
 
 #[path = "tests/winops_and_resets.rs"]
 mod winops_and_resets;
+
+/// Kitty keyboard protocol negotiation.
+mod kitty_keyboard;

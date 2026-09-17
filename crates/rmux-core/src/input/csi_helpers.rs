@@ -1,5 +1,6 @@
 //! CSI helper dispatchers for mode and window-operation sequences.
 
+use super::kitty;
 use super::mode;
 use super::writer::ScreenWriter;
 use super::InputParser;
@@ -68,8 +69,11 @@ pub(super) fn dispatch_sm_private<W: ScreenWriter + ?Sized>(
             1004 => writer.mode_set(mode::MODE_FOCUSON),
             1005 => writer.mode_set(mode::MODE_MOUSE_UTF8),
             1006 => writer.mode_set(mode::MODE_MOUSE_SGR),
-            47 | 1047 => writer.alternate_on(bg, false),
-            1049 => writer.alternate_on(bg, true),
+            47 | 1047 | 1049 => {
+                parser.kitty.enter_alternate();
+                kitty::apply(&parser.kitty, writer);
+                writer.alternate_on(bg, parser.param_list.get(i, 0, -1) == 1049);
+            }
             2004 => writer.mode_set(mode::MODE_BRACKETPASTE),
             2026 => writer.start_sync(),
             2031 => writer.mode_set(mode::MODE_THEME_UPDATES),
@@ -110,8 +114,11 @@ pub(super) fn dispatch_rm_private<W: ScreenWriter + ?Sized>(
             1004 => writer.mode_clear(mode::MODE_FOCUSON),
             1005 => writer.mode_clear(mode::MODE_MOUSE_UTF8),
             1006 => writer.mode_clear(mode::MODE_MOUSE_SGR),
-            47 | 1047 => writer.alternate_off(bg, false),
-            1049 => writer.alternate_off(bg, true),
+            47 | 1047 | 1049 => {
+                parser.kitty.leave_alternate();
+                kitty::apply(&parser.kitty, writer);
+                writer.alternate_off(bg, parser.param_list.get(i, 0, -1) == 1049);
+            }
             2004 => writer.mode_clear(mode::MODE_BRACKETPASTE),
             2026 => writer.stop_sync(),
             2031 => writer.mode_clear(mode::MODE_THEME_UPDATES),

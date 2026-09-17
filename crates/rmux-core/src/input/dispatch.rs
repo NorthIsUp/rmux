@@ -6,6 +6,7 @@ pub use super::writer::ScreenWriter;
 use super::csi_helpers::{
     dispatch_rm, dispatch_rm_private, dispatch_sm, dispatch_sm_private, dispatch_winops,
 };
+use super::kitty;
 use super::mode;
 use super::sgr;
 use super::tables;
@@ -65,6 +66,8 @@ pub(crate) fn dispatch_esc<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
     match cmd {
         EscCommand::Ris => {
             parser.cell.reset();
+            parser.kitty.reset();
+            kitty::apply(&parser.kitty, writer);
             writer.full_reset();
         }
         EscCommand::Ind => {
@@ -408,15 +411,27 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
                 _ => {}
             }
         }
-        // RMUX 0.9 does not implement the complete Kitty keyboard protocol.
-        // Consume every negotiation form without replying or changing the
-        // pane's key mode: accepting Set/Push while ignoring Query advertises
-        // a partial protocol that applications cannot use losslessly, and Pop
-        // must not clear an independently enabled xterm extended-key mode.
-        CsiCommand::KittyKeyboardSet
-        | CsiCommand::KittyKeyboardPush
-        | CsiCommand::KittyKeyboardPop
-        | CsiCommand::KittyKeyboardQuery => {}
+        // Kitty keyboard protocol, disambiguation only. Every request is
+        // masked to what rmux implements, and the query reply is how an
+        // application that asked for more finds out what it got — which is the
+        // part the protocol relies on to degrade.
+        CsiCommand::KittyKeyboardSet => {
+            let mode = kitty::SetMode::from_param(parser.param_list.get(1, 0, 1));
+            parser.kitty.set(parser.param_list.get(0, 0, 0), &mode);
+            kitty::apply(&parser.kitty, writer);
+        }
+        CsiCommand::KittyKeyboardPush => {
+            parser.kitty.push(parser.param_list.get(0, 0, 0));
+            kitty::apply(&parser.kitty, writer);
+        }
+        CsiCommand::KittyKeyboardPop => {
+            parser.kitty.pop(parser.param_list.get(0, 0, 1));
+            kitty::apply(&parser.kitty, writer);
+        }
+        CsiCommand::KittyKeyboardQuery => {
+            let flags = parser.kitty.flags();
+            parser.reply(&format!("\x1b[?{flags}u"));
+        }
         CsiCommand::Modoff => {
             let n = parser.param_list.get(0, 0, 0);
             if n != 4 {

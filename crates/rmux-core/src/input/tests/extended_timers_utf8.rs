@@ -14,41 +14,36 @@ fn modoff_clears_extended_keys() {
 }
 
 #[test]
-fn kitty_keyboard_requests_are_consumed_without_negotiating_support() {
+fn kitty_requests_for_unimplemented_flags_change_nothing() {
+    // event types, alternate keys, associated text: asked for, not honoured
     for request in [
         b"\x1b[=8u".as_slice(),
         b"\x1b[=0u".as_slice(),
         b"\x1b[=1;3u".as_slice(),
-        b"\x1b[>1u".as_slice(),
         b"\x1b[>0u".as_slice(),
-        b"\x1b[>1;3u".as_slice(),
         b"\x1b[<u".as_slice(),
         b"\x1b[<2u".as_slice(),
-        b"\x1b[?u".as_slice(),
     ] {
-        let (parser, writer) = parse(request);
-
-        assert!(parser.reply_buf.is_empty(), "request {request:?}");
+        let (_parser, writer) = parse(request);
         assert_eq!(writer.mode, MODE_CURSOR | MODE_WRAP, "request {request:?}");
-        assert!(!writer.has_call("mode_set("), "request {request:?}");
-        assert!(!writer.has_call("mode_clear("), "request {request:?}");
     }
+}
+
+#[test]
+fn a_kitty_query_always_answers() {
+    // silence is what leaves an application guessing; zero is an answer
+    let (mut parser, _writer) = parse(b"\x1b[?u");
+    assert_eq!(parser.take_replies(), b"\x1b[?0u".to_vec());
 }
 
 #[test]
 fn kitty_keyboard_requests_preserve_xterm_extended_key_mode() {
     let (_parser, writer) = parse(b"\x1b[>4;2m\x1b[=8u\x1b[>1u\x1b[<u\x1b[?u");
-    let mode_transitions = writer
-        .calls
-        .iter()
-        .filter(|call| call.starts_with("mode_set(") || call.starts_with("mode_clear("))
-        .map(String::as_str)
-        .collect::<Vec<_>>();
 
-    assert_eq!(writer.mode, MODE_CURSOR | MODE_WRAP | MODE_KEYS_EXTENDED_2);
     assert_eq!(
-        mode_transitions,
-        ["mode_clear(0x248000)", "mode_set(0x40000)"]
+        writer.mode,
+        MODE_CURSOR | MODE_WRAP | MODE_KEYS_EXTENDED_2,
+        "a pane that enabled modifyOtherKeys keeps it across a kitty exchange"
     );
 }
 
