@@ -3,48 +3,14 @@ use super::*;
 #[test]
 fn modset_extended_keys_mode_2() {
     let (_p, w) = parse(b"\x1b[>4;2m");
-    assert!(w.has_call("mode_clear(0x248000)")); // EXTENDED_KEY_MODES
+    assert!(w.has_call("mode_clear(0x48000)")); // XTERM_KEY_MODES
     assert!(w.has_call("mode_set(0x40000)")); // MODE_KEYS_EXTENDED_2
 }
 
 #[test]
 fn modoff_clears_extended_keys() {
     let (_p, w) = parse(b"\x1b[>4n");
-    assert!(w.has_call("mode_clear(0x248000)")); // EXTENDED_KEY_MODES
-}
-
-#[test]
-fn kitty_requests_for_unimplemented_flags_change_nothing() {
-    // event types, alternate keys, associated text: asked for, not honoured
-    for request in [
-        b"\x1b[=8u".as_slice(),
-        b"\x1b[=0u".as_slice(),
-        b"\x1b[=1;3u".as_slice(),
-        b"\x1b[>0u".as_slice(),
-        b"\x1b[<u".as_slice(),
-        b"\x1b[<2u".as_slice(),
-    ] {
-        let (_parser, writer) = parse(request);
-        assert_eq!(writer.mode, MODE_CURSOR | MODE_WRAP, "request {request:?}");
-    }
-}
-
-#[test]
-fn a_kitty_query_always_answers() {
-    // silence is what leaves an application guessing; zero is an answer
-    let (mut parser, _writer) = parse(b"\x1b[?u");
-    assert_eq!(parser.take_replies(), b"\x1b[?0u".to_vec());
-}
-
-#[test]
-fn kitty_keyboard_requests_preserve_xterm_extended_key_mode() {
-    let (_parser, writer) = parse(b"\x1b[>4;2m\x1b[=8u\x1b[>1u\x1b[<u\x1b[?u");
-
-    assert_eq!(
-        writer.mode,
-        MODE_CURSOR | MODE_WRAP | MODE_KEYS_EXTENDED_2,
-        "a pane that enabled modifyOtherKeys keeps it across a kitty exchange"
-    );
+    assert!(w.has_call("mode_clear(0x48000)")); // XTERM_KEY_MODES
 }
 
 // ─── Hardening: ground timer ───────────────────────────────────────

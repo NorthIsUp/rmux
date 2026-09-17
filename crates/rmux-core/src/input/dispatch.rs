@@ -404,8 +404,12 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
                 return;
             }
             let m = parser.param_list.get(1, 0, 0);
-            parser.kitty.clear_current(writer.is_alternate());
-            writer.mode_clear(mode::EXTENDED_KEY_MODES);
+            // `CSI > 4 ; m` is the xterm protocol's, so it ends the Kitty
+            // negotiation rather than reaching past it: a pane left with flags
+            // it is not honouring answers the next query with a mode it is not
+            // in, and the request after that takes this one back.
+            kitty::negotiate(&mut parser.kitty, writer, kitty::KittyKeyboard::clear_flags);
+            writer.mode_clear(mode::XTERM_KEY_MODES);
             match m {
                 2 => writer.mode_set(mode::MODE_KEYS_EXTENDED_2),
                 1 => writer.mode_set(mode::MODE_KEYS_EXTENDED),
@@ -417,20 +421,19 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
         // application that asked for more finds out what it got — which is the
         // part the protocol relies on to degrade.
         CsiCommand::KittyKeyboardSet => {
-            let mode = kitty::SetMode::from_param(parser.param_list.get(1, 0, 1));
-            let alternate = writer.is_alternate();
-            parser.kitty.set(alternate, parser.param_list.get(0, 0, 0), &mode);
-            kitty::apply(&parser.kitty, writer);
+            let (flags, mode) = (
+                parser.param_list.get(0, 0, 0),
+                kitty::SetMode::from_param(parser.param_list.get(1, 0, 1)),
+            );
+            kitty::negotiate(&mut parser.kitty, writer, |screen| screen.set(flags, mode));
         }
         CsiCommand::KittyKeyboardPush => {
-            let alternate = writer.is_alternate();
-            parser.kitty.push(alternate, parser.param_list.get(0, 0, 0));
-            kitty::apply(&parser.kitty, writer);
+            let flags = parser.param_list.get(0, 0, 0);
+            kitty::negotiate(&mut parser.kitty, writer, |screen| screen.push(flags));
         }
         CsiCommand::KittyKeyboardPop => {
-            let alternate = writer.is_alternate();
-            parser.kitty.pop(alternate, parser.param_list.get(0, 0, 1));
-            kitty::apply(&parser.kitty, writer);
+            let count = parser.param_list.get(0, 0, 1);
+            kitty::negotiate(&mut parser.kitty, writer, |screen| screen.pop(count));
         }
         CsiCommand::KittyKeyboardQuery => {
             let flags = parser.kitty.flags(writer.is_alternate());
@@ -441,8 +444,8 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
             if n != 4 {
                 return;
             }
-            parser.kitty.clear_current(writer.is_alternate());
-            writer.mode_clear(mode::EXTENDED_KEY_MODES);
+            kitty::negotiate(&mut parser.kitty, writer, kitty::KittyKeyboard::clear_flags);
+            writer.mode_clear(mode::XTERM_KEY_MODES);
         }
         CsiCommand::Scp => {
             // Save cursor position.

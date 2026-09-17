@@ -13,7 +13,7 @@ use super::writer::ScreenWriter;
 
 /// The one progressive enhancement rmux implements: disambiguate escape codes,
 /// which is what makes a modified key distinct from the bare one.
-pub(crate) const SUPPORTED: u8 = 0b1;
+pub(super) const SUPPORTED: u8 = 0b1;
 
 /// How many saves an application may stack before the oldest is evicted. The
 /// specification asks for a limit so a program cannot exhaust memory by
@@ -21,7 +21,8 @@ pub(crate) const SUPPORTED: u8 = 0b1;
 const STACK_MAX: usize = 16;
 
 /// How a set request applies its flags.
-pub(crate) enum SetMode {
+#[derive(Clone, Copy)]
+pub(super) enum SetMode {
     /// Set what is named, reset what is not.
     Replace,
     /// Set what is named, leave the rest.
@@ -32,7 +33,7 @@ pub(crate) enum SetMode {
 
 impl SetMode {
     /// The mode parameter of `CSI = flags ; mode u`, which defaults to 1.
-    pub(crate) fn from_param(param: i32) -> Self {
+    pub(super) fn from_param(param: i32) -> Self {
         match param {
             2 => Self::Add,
             3 => Self::Remove,
@@ -42,7 +43,7 @@ impl SetMode {
 }
 
 /// Both screens' negotiations. Which one is in force is the screen's business,
-/// not this type's, so every entry point is told.
+/// not this type's, so `negotiate` asks it.
 ///
 /// Entering the alternate screen starts from nothing and leaving it throws
 /// that away, so an editor's keyboard mode neither inherits from nor outlives
@@ -62,52 +63,42 @@ impl KittyScreens {
         }
     }
 
-    pub(crate) fn flags(&self, alternate: bool) -> u8 {
-        if alternate {
-            self.alternate.flags()
-        } else {
-            self.main.flags()
-        }
-    }
-
-    pub(crate) fn set(&mut self, alternate: bool, requested: i32, mode: &SetMode) {
-        self.screen(alternate).set(requested, mode);
-    }
-
-    pub(crate) fn push(&mut self, alternate: bool, requested: i32) {
-        self.screen(alternate).push(requested);
-    }
-
-    pub(crate) fn pop(&mut self, alternate: bool, count: i32) {
-        self.screen(alternate).pop(count);
-    }
-
-    /// `CSI > 4 m` and `CSI > 4 ; m`. Those clear `EXTENDED_KEY_MODES`, which
-    /// includes the Kitty bit, so the flags have to go with it — a query that
-    /// still answered `1` would promise a disambiguation the pane is no longer
-    /// in, and the next Kitty request would quietly take the xterm mode the
-    /// application just asked for away again. The stack survives: a later pop
-    /// is a Kitty request, and those own this bit.
-    pub(crate) fn clear_current(&mut self, alternate: bool) {
-        self.screen(alternate).flags = 0;
+    /// What the screen in use would tell an application that asked.
+    pub(super) fn flags(&self, alternate: bool) -> u8 {
+        if alternate { &self.alternate } else { &self.main }.flags()
     }
 
     /// The alternate screen negotiates from nothing, every time it is entered
     /// or left, so nothing follows an editor in or out.
-    pub(crate) fn reset_alternate(&mut self) {
+    pub(super) fn reset_alternate(&mut self) {
         self.alternate = KittyKeyboard::default();
     }
 
     /// RIS. A reset that left saves on the stack would let a later pop restore
     /// a mode no application ever asked for.
-    pub(crate) fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         *self = Self::default();
     }
 }
 
+/// Change the negotiation the pane's current screen is under, and put the
+/// result in force.
+///
+/// The only way to change it: finding the screen, changing it and applying the
+/// answer are one step, so a change that never reaches the pane — the exact
+/// disagreement this protocol exists to prevent — cannot be written.
+pub(super) fn negotiate<W: ScreenWriter + ?Sized>(
+    kitty: &mut KittyScreens,
+    writer: &mut W,
+    change: impl FnOnce(&mut KittyKeyboard),
+) {
+    change(kitty.screen(writer.is_alternate()));
+    apply(kitty, writer);
+}
+
 /// The flags in force on one screen, and what has been pushed there.
 #[derive(Debug, Default)]
-struct KittyKeyboard {
+pub(crate) struct KittyKeyboard {
     flags: u8,
     stack: VecDeque<u8>,
 }
@@ -119,9 +110,9 @@ impl KittyKeyboard {
     }
 
     /// `CSI = flags ; mode u`.
-    fn set(&mut self, requested: i32, mode: &SetMode) {
+    pub(super) fn set(&mut self, requested: i32, mode: SetMode) {
         let flags = supported(requested);
-        self.flags = match mode {
+        self.flags = match &mode {
             SetMode::Replace => flags,
             SetMode::Add => self.flags | flags,
             SetMode::Remove => self.flags & !flags,
@@ -129,7 +120,7 @@ impl KittyKeyboard {
     }
 
     /// `CSI > flags u`. A full stack loses its oldest entry, never this one.
-    fn push(&mut self, requested: i32) {
+    pub(super) fn push(&mut self, requested: i32) {
         if self.stack.len() == STACK_MAX {
             self.stack.pop_front();
         }
@@ -139,10 +130,18 @@ impl KittyKeyboard {
 
     /// `CSI < number u`. Popping past the last save resets every flag, which
     /// is the specification's answer to an application that pops too far.
-    fn pop(&mut self, count: i32) {
+    pub(super) fn pop(&mut self, count: i32) {
         for _ in 0..count.max(0) {
             self.flags = self.stack.pop_back().unwrap_or(0);
         }
+    }
+}
+
+impl KittyKeyboard {
+    /// Give up the flags but keep the stack: a pop is a Kitty request, and
+    /// those own this mode.
+    pub(super) fn clear_flags(&mut self) {
+        self.flags = 0;
     }
 }
 
