@@ -41,7 +41,8 @@ impl SetMode {
     }
 }
 
-/// Both screens' negotiations, and which one the pane is showing.
+/// Both screens' negotiations. Which one is in force is the screen's business,
+/// not this type's, so every entry point is told.
 ///
 /// Entering the alternate screen starts from nothing and leaving it throws
 /// that away, so an editor's keyboard mode neither inherits from nor outlives
@@ -50,51 +51,51 @@ impl SetMode {
 pub(crate) struct KittyScreens {
     main: KittyKeyboard,
     alternate: KittyKeyboard,
-    showing_alternate: bool,
 }
 
 impl KittyScreens {
-    /// The negotiation for the screen in use.
-    fn current(&mut self) -> &mut KittyKeyboard {
-        if self.showing_alternate {
+    fn screen(&mut self, alternate: bool) -> &mut KittyKeyboard {
+        if alternate {
             &mut self.alternate
         } else {
             &mut self.main
         }
     }
 
-    pub(crate) fn flags(&self) -> u8 {
-        if self.showing_alternate {
+    pub(crate) fn flags(&self, alternate: bool) -> u8 {
+        if alternate {
             self.alternate.flags()
         } else {
             self.main.flags()
         }
     }
 
-    pub(crate) fn set(&mut self, requested: i32, mode: &SetMode) {
-        self.current().set(requested, mode);
+    pub(crate) fn set(&mut self, alternate: bool, requested: i32, mode: &SetMode) {
+        self.screen(alternate).set(requested, mode);
     }
 
-    pub(crate) fn push(&mut self, requested: i32) {
-        self.current().push(requested);
+    pub(crate) fn push(&mut self, alternate: bool, requested: i32) {
+        self.screen(alternate).push(requested);
     }
 
-    pub(crate) fn pop(&mut self, count: i32) {
-        self.current().pop(count);
+    pub(crate) fn pop(&mut self, alternate: bool, count: i32) {
+        self.screen(alternate).pop(count);
     }
 
-    /// Idempotent, because a terminal that is already on the alternate screen
-    /// ignores a second request to switch to it.
-    pub(crate) fn enter_alternate(&mut self) {
-        if !self.showing_alternate {
-            self.alternate = KittyKeyboard::default();
-            self.showing_alternate = true;
-        }
+    /// `CSI > 4 m` and `CSI > 4 ; m`. Those clear `EXTENDED_KEY_MODES`, which
+    /// includes the Kitty bit, so the flags have to go with it — a query that
+    /// still answered `1` would promise a disambiguation the pane is no longer
+    /// in, and the next Kitty request would quietly take the xterm mode the
+    /// application just asked for away again. The stack survives: a later pop
+    /// is a Kitty request, and those own this bit.
+    pub(crate) fn clear_current(&mut self, alternate: bool) {
+        self.screen(alternate).flags = 0;
     }
 
-    pub(crate) fn leave_alternate(&mut self) {
+    /// The alternate screen negotiates from nothing, every time it is entered
+    /// or left, so nothing follows an editor in or out.
+    pub(crate) fn reset_alternate(&mut self) {
         self.alternate = KittyKeyboard::default();
-        self.showing_alternate = false;
     }
 
     /// RIS. A reset that left saves on the stack would let a later pop restore
@@ -147,14 +148,15 @@ impl KittyKeyboard {
 
 /// What is left of a requested flag set once the unimplemented bits go.
 fn supported(requested: i32) -> u8 {
-    u8::try_from(requested.max(0) & i32::from(SUPPORTED)).unwrap_or(0)
+    // the mask is one bit wide, so the result always fits
+    (requested.max(0) & i32::from(SUPPORTED)) as u8
 }
 
 /// Put a pane's Kitty flags in force on its screen, leaving the xterm
 /// extended-key modes alone: an application that never spoke Kitty may have
 /// enabled one of those.
 pub(super) fn apply<W: ScreenWriter + ?Sized>(kitty: &KittyScreens, writer: &mut W) {
-    if kitty.flags() & SUPPORTED != 0 {
+    if kitty.flags(writer.is_alternate()) & SUPPORTED != 0 {
         writer.mode_set(mode::MODE_KEYS_KITTY);
     } else {
         writer.mode_clear(mode::MODE_KEYS_KITTY);

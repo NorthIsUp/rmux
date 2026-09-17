@@ -69,10 +69,16 @@ pub(super) fn dispatch_sm_private<W: ScreenWriter + ?Sized>(
             1004 => writer.mode_set(mode::MODE_FOCUSON),
             1005 => writer.mode_set(mode::MODE_MOUSE_UTF8),
             1006 => writer.mode_set(mode::MODE_MOUSE_SGR),
-            47 | 1047 | 1049 => {
-                parser.kitty.enter_alternate();
+            mode_number @ (47 | 1047 | 1049) => {
+                // only a screen that was not already showing negotiates afresh:
+                // a second request to switch changes nothing, and must not
+                // throw away what the program in there asked for
+                let switching = !writer.is_alternate();
+                writer.alternate_on(bg, mode_number == 1049);
+                if switching {
+                    parser.kitty.reset_alternate();
+                }
                 kitty::apply(&parser.kitty, writer);
-                writer.alternate_on(bg, parser.param_list.get(i, 0, -1) == 1049);
             }
             2004 => writer.mode_set(mode::MODE_BRACKETPASTE),
             2026 => writer.start_sync(),
@@ -114,10 +120,11 @@ pub(super) fn dispatch_rm_private<W: ScreenWriter + ?Sized>(
             1004 => writer.mode_clear(mode::MODE_FOCUSON),
             1005 => writer.mode_clear(mode::MODE_MOUSE_UTF8),
             1006 => writer.mode_clear(mode::MODE_MOUSE_SGR),
-            47 | 1047 | 1049 => {
-                parser.kitty.leave_alternate();
+            mode_number @ (47 | 1047 | 1049) => {
+                writer.alternate_off(bg, mode_number == 1049);
+                // what the program did in there does not outlive it
+                parser.kitty.reset_alternate();
                 kitty::apply(&parser.kitty, writer);
-                writer.alternate_off(bg, parser.param_list.get(i, 0, -1) == 1049);
             }
             2004 => writer.mode_clear(mode::MODE_BRACKETPASTE),
             2026 => writer.stop_sync(),

@@ -230,3 +230,65 @@ fn an_xterm_extended_key_mode_survives_a_kitty_pop() {
         "an application that never spoke kitty keeps its mode"
     );
 }
+
+// ─── Living beside the xterm extended-key modes, the other way round ───
+
+#[test]
+fn turning_on_modify_other_keys_takes_disambiguation_with_it() {
+    // CSI > 4 ; 2 m clears every extended-key mode, the kitty bit among them,
+    // so the negotiation has to end too
+    let (mut p, mut w) = session();
+    p.parse(b"\x1b[>1u", &mut w);
+    p.parse(b"\x1b[>4;2m", &mut w);
+    assert!(!on(&w), "the mode the pane is in");
+    p.parse(b"\x1b[?u", &mut w);
+    assert_eq!(
+        p.take_replies(),
+        b"\x1b[?0u".to_vec(),
+        "and the mode the application is told about"
+    );
+}
+
+#[test]
+fn a_later_kitty_request_does_not_resurrect_a_cleared_mode() {
+    // a request that names no bits changed nothing, so it must turn nothing on
+    let (mut p, mut w) = session();
+    p.parse(b"\x1b[>1u\x1b[>4;2m", &mut w);
+    p.parse(b"\x1b[=0;2u", &mut w);
+    assert!(!on(&w));
+    assert_ne!(
+        w.mode & MODE_KEYS_EXTENDED_2,
+        0,
+        "the xterm mode the application asked for is still its own"
+    );
+}
+
+#[test]
+fn modify_other_keys_off_ends_the_negotiation_too() {
+    let (mut p, mut w) = session();
+    p.parse(b"\x1b[>1u\x1b[>4m\x1b[?u", &mut w);
+    assert!(!on(&w));
+    assert_eq!(p.take_replies(), b"\x1b[?0u".to_vec());
+}
+
+#[test]
+fn a_pop_can_still_bring_disambiguation_back() {
+    // clearing the flags does not empty the stack: a pop is a kitty request,
+    // and those own this bit
+    let (mut p, mut w) = session();
+    p.parse(b"\x1b[>1u\x1b[>1u\x1b[>4;2m", &mut w);
+    assert!(!on(&w));
+    p.parse(b"\x1b[<1u", &mut w);
+    assert!(on(&w), "the save is untouched");
+}
+
+#[test]
+fn a_second_request_for_the_alternate_screen_keeps_its_negotiation() {
+    // the editor is already in there; ?1049h again is not a fresh start
+    let (mut p, mut w) = session();
+    p.parse(b"\x1b[?1049h", &mut w);
+    p.parse(b"\x1b[>1u", &mut w);
+    assert!(on(&w));
+    p.parse(b"\x1b[?1049h", &mut w);
+    assert!(on(&w), "nothing switched, so nothing was renegotiated");
+}

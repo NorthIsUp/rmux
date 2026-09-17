@@ -90,9 +90,11 @@ pub fn render_dec_modes(mode_bits: u32, cursor_style: u32, out: &mut Vec<u8>) {
         out.extend_from_slice(b"\x1b[?1005h");
     }
 
-    // Keyboard enhancement protocols.
+    // Keyboard enhancement protocols. `CSI = flags ; 1 u` states the mode;
+    // `CSI > flags u` would push it onto the receiving terminal's stack, and
+    // re-asserting modes is something that happens over and over.
     if on(mode::MODE_KEYS_KITTY) {
-        out.extend_from_slice(b"\x1b[>1u");
+        out.extend_from_slice(b"\x1b[=1;1u");
     } else if on(mode::MODE_KEYS_EXTENDED_2) {
         out.extend_from_slice(b"\x1b[>4;2m");
     } else if on(mode::MODE_KEYS_EXTENDED) {
@@ -176,13 +178,15 @@ pub fn render_dec_modes_for_snapshot(mode_bits: u32, cursor_style: u32, out: &mu
     }
 
     if on(mode::MODE_KEYS_KITTY) {
-        out.extend_from_slice(b"\x1b[>1u");
+        out.extend_from_slice(b"\x1b[=1;1u");
     } else if on(mode::MODE_KEYS_EXTENDED_2) {
         out.extend_from_slice(b"\x1b[>4;2m");
     } else if on(mode::MODE_KEYS_EXTENDED) {
         out.extend_from_slice(b"\x1b[>4;1m");
     } else {
-        out.extend_from_slice(b"\x1b[<u");
+        // off is a state to declare, not an entry to pop: the stack this
+        // snapshot's receiver keeps is its own
+        out.extend_from_slice(b"\x1b[=0;1u");
         out.extend_from_slice(b"\x1b[>4;0m");
     }
 
@@ -254,7 +258,7 @@ mod tests {
             | mode::MODE_KEYS_EXTENDED_2
             | mode::MODE_KEYS_KITTY;
         let out = rendered(bits, 0);
-        assert!(out.contains("\x1b[>1u"), "{out:?}");
+        assert!(out.contains("\x1b[=1;1u"), "{out:?}");
         assert!(!out.contains("\x1b[>4;2m"), "{out:?}");
     }
 
@@ -267,7 +271,9 @@ mod tests {
         assert!(out.contains("\x1b[?2026l"), "{out:?}");
         assert!(out.contains("\x1b[?2004l"), "{out:?}");
         assert!(out.contains("\x1b[?1006l"), "{out:?}");
-        assert!(out.contains("\x1b[<u"), "{out:?}");
+        // off is stated, not popped: the receiver's stack is its own
+        assert!(out.contains("\x1b[=0;1u"), "{out:?}");
+        assert!(!out.contains("\x1b[<u"), "{out:?}");
         assert!(out.contains("\x1b[>4;0m"), "{out:?}");
         assert!(out.contains("\x1b[0 q"), "{out:?}");
         assert!(!out.contains("\x1b[?2026h"), "{out:?}");
@@ -302,7 +308,7 @@ mod tests {
         render_dec_modes_for_snapshot(bits, 0, &mut out);
         let out = String::from_utf8(out).expect("snapshot modes are ascii");
 
-        assert!(out.contains("\x1b[>1u"), "{out:?}");
+        assert!(out.contains("\x1b[=1;1u"), "{out:?}");
         assert!(!out.contains("\x1b[>4;2m"), "{out:?}");
     }
 }

@@ -404,6 +404,7 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
                 return;
             }
             let m = parser.param_list.get(1, 0, 0);
+            parser.kitty.clear_current(writer.is_alternate());
             writer.mode_clear(mode::EXTENDED_KEY_MODES);
             match m {
                 2 => writer.mode_set(mode::MODE_KEYS_EXTENDED_2),
@@ -417,19 +418,22 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
         // part the protocol relies on to degrade.
         CsiCommand::KittyKeyboardSet => {
             let mode = kitty::SetMode::from_param(parser.param_list.get(1, 0, 1));
-            parser.kitty.set(parser.param_list.get(0, 0, 0), &mode);
+            let alternate = writer.is_alternate();
+            parser.kitty.set(alternate, parser.param_list.get(0, 0, 0), &mode);
             kitty::apply(&parser.kitty, writer);
         }
         CsiCommand::KittyKeyboardPush => {
-            parser.kitty.push(parser.param_list.get(0, 0, 0));
+            let alternate = writer.is_alternate();
+            parser.kitty.push(alternate, parser.param_list.get(0, 0, 0));
             kitty::apply(&parser.kitty, writer);
         }
         CsiCommand::KittyKeyboardPop => {
-            parser.kitty.pop(parser.param_list.get(0, 0, 1));
+            let alternate = writer.is_alternate();
+            parser.kitty.pop(alternate, parser.param_list.get(0, 0, 1));
             kitty::apply(&parser.kitty, writer);
         }
         CsiCommand::KittyKeyboardQuery => {
-            let flags = parser.kitty.flags();
+            let flags = parser.kitty.flags(writer.is_alternate());
             parser.reply(&format!("\x1b[?{flags}u"));
         }
         CsiCommand::Modoff => {
@@ -437,6 +441,7 @@ pub(crate) fn dispatch_csi<W: ScreenWriter + ?Sized>(parser: &mut InputParser, w
             if n != 4 {
                 return;
             }
+            parser.kitty.clear_current(writer.is_alternate());
             writer.mode_clear(mode::EXTENDED_KEY_MODES);
         }
         CsiCommand::Scp => {
